@@ -3,7 +3,6 @@ from supabase import create_client, Client
 import pandas as pd
 from scipy import stats
 import plotly.express as px
-import time
 
 # 1. Supabase 연결 설정 (secrets.toml 사용)
 url: str = st.secrets["SUPABASE_URL"]
@@ -33,13 +32,23 @@ def main():
 def professor_view():
     st.title("👨‍🏫 실험 통제 및 결과 패널")
     
-    col1, col2 = st.columns([1, 5])
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        if st.button("실험 시작 (학생 화면 열기)"):
+        if st.button("▶️ 실험 시작 (질문 열기)"):
             supabase.table("experiment_control").update({"is_started": True}).eq("id", 1).execute()
-            st.success("학생들의 화면에 설문이 열렸습니다!")
+            st.success("학생들 화면에 질문이 열렸습니다!")
     with col2:
-        if st.button("새로고침"):
+        if st.button("⏸️ 실험 대기 (질문 닫기)"):
+            supabase.table("experiment_control").update({"is_started": False}).eq("id", 1).execute()
+            st.warning("학생들 화면이 다시 대기 상태로 변경되었습니다.")
+    with col3:
+        if st.button("🗑️ 데이터 초기화 (전체 삭제)"):
+            # 학생 데이터 전부 삭제 및 실험 상태 False로 초기화
+            supabase.table("mbti_investment_survey").delete().neq("nickname", "").execute()
+            supabase.table("experiment_control").update({"is_started": False}).eq("id", 1).execute()
+            st.error("모든 학생 데이터가 초기화되었습니다.")
+    with col4:
+        if st.button("🔄 새로고침"):
             st.rerun()
 
     st.divider()
@@ -84,7 +93,7 @@ def professor_view():
                     st.markdown(f"- **{name}** | 인지: {cog:.1f} | 행동: {beh:.2f} | "
                                 f"불일치 지수(차이): **{gap_abs:.2f}** $\\rightarrow$ :{color}[{status}]")
                 else:
-                    st.markdown(f"- **{name}** | ⏳ 설문 진행 중...")
+                    st.markdown(f"- **{name}** | ⏳ 대기 또는 설문 진행 중...")
 
     # [탭 2] 우리 반 포지션 맵
     with tab2:
@@ -153,6 +162,7 @@ def professor_view():
 def student_view(nickname):
     st.title(f"반갑습니다, {nickname}님! 👋")
     
+    # 닉네임을 DB에 등록 (이미 등록된 경우 무시됨)
     try:
         supabase.table("mbti_investment_survey").insert({"nickname": nickname}).execute()
     except Exception:
@@ -160,60 +170,63 @@ def student_view(nickname):
     
     state = supabase.table("experiment_control").select("is_started").eq("id", 1).execute()
     
+    # 🚨 실험이 시작되지 않은 경우 여기서 화면 렌더링을 완전히 멈춤 (질문 노출 원천 차단)
     if not state.data[0]['is_started']:
         st.info("⏳ 대기 중... 교수님이 실험을 시작할 때까지 기다려 주세요.")
-        time.sleep(3)
-        st.rerun()
-    else:
-        user_data = supabase.table("mbti_investment_survey").select("cognitive_score").eq("nickname", nickname).execute()
-        if user_data.data and user_data.data[0].get("cognitive_score") is not None:
-            st.info("✅ 설문 제출이 완료되었습니다. 화면 상단의 교수님 통계 결과를 함께 확인해 보세요.")
-            return
+        if st.button("상태 확인 (새로고침)"):
+            st.rerun()
+        return  # 이 아래의 코드(설문지)는 실행되지 않습니다.
+    
+    # 실험이 시작된 경우 아래 코드 실행
+    user_data = supabase.table("mbti_investment_survey").select("cognitive_score").eq("nickname", nickname).execute()
+    if user_data.data and user_data.data[0].get("cognitive_score") is not None:
+        st.info("✅ 설문 제출이 완료되었습니다. 화면 상단의 교수님 통계 결과를 함께 확인해 보세요.")
+        return
+    
+    with st.form("survey_form"):
+        st.subheader("1. 나의 MBTI")
+        col1, col2, col3, col4 = st.columns(4)
+        e_i = col1.selectbox("에너지 방향", ["E", "I"])
+        s_n = col2.selectbox("정보 수집", ["S", "N"])
+        t_f = col3.selectbox("의사 결정", ["T", "F"])
+        j_p = col4.selectbox("생활 양식", ["J", "P"])
         
-        with st.form("survey_form"):
-            st.subheader("1. 나의 MBTI")
-            col1, col2, col3, col4 = st.columns(4)
-            e_i = col1.selectbox("에너지 방향", ["E", "I"])
-            s_n = col2.selectbox("정보 수집", ["S", "N"])
-            t_f = col3.selectbox("의사 결정", ["T", "F"])
-            j_p = col4.selectbox("생활 양식", ["J", "P"])
+        st.subheader("2. 인지적 투자성향")
+        cog_choice = st.radio("가장 본인과 가까운 성향을 선택하세요:", [
+            "1점: 어떤 위험도 회피하며, 원금 보존과 은행 이자율 수준의 안전한 성장 추구",
+            "2점: 원금 보존을 최우선으로 하되, 5% 미만의 약간의 손실 위험을 감수하고 예금보다 약간 높은 수익 추구",
+            "3점: 원금에 10% 미만의 손실이 발생할 수 있음을 인지하고, 안정성과 수익성을 동시에 추구",
+            "4점: 투자원금의 10~20% 손실을 감수하면서 고수익 추구",
+            "5점: 투자원금의 20% 이상 손실을 감수하면서 고수익 추구"
+        ])
+        cog_score = int(cog_choice[0])
+        
+        st.subheader("3. 행동적 투자성향")
+        st.markdown("**(1) 투자 대상 선호**")
+        b1 = st.slider("1점 (은행 예·적금 선호) ↔ 5점 (주식, 채권 등에 직접 투자)", 1, 5, 3)
+        
+        st.markdown("**(2) 투자 기간**")
+        b2 = st.slider("1점 (장기적으로 투자) ↔ 5점 (단기적으로 투자)", 1, 5, 3)
+        
+        st.markdown("**(3) 투자 자금 성격**")
+        b3 = st.slider("1점 (여유자금으로 투자) ↔ 5점 (기회가 있다면 빚을 내서라도 투자)", 1, 5, 3)
+        
+        st.markdown("**(4) 투자 분산 정도**")
+        b4 = st.slider("1점 (다양한 상품에 분산 투자) ↔ 5점 (한 가지 상품에 집중 투자)", 1, 5, 3)
+        
+        st.markdown("**(5) 안정성 vs 수익성**")
+        b5 = st.slider("1점 (자산의 안정성이 우선) ↔ 5점 (원금 손실 위험이 있더라도 수익성이 우선)", 1, 5, 3)
+        
+        submitted = st.form_submit_button("결과 제출하기")
+        
+        if submitted:
+            beh_score = (b1 + b2 + b3 + b4 + b5) / 5.0
+            supabase.table("mbti_investment_survey").update({
+                "mbti_e_i": e_i, "mbti_s_n": s_n, "mbti_t_f": t_f, "mbti_j_p": j_p,
+                "cognitive_score": cog_score, "behavioral_score": beh_score
+            }).eq("nickname", nickname).execute()
             
-            st.subheader("2. 인지적 투자성향")
-            cog_choice = st.radio("가장 본인과 가까운 성향을 선택하세요:", [
-                "1점: 어떤 위험도 회피하며, 원금 보존과 은행 이자율 수준의 안전한 성장 추구",
-                "2점: 원금 보존을 최우선으로 하되, 5% 미만의 약간의 손실 위험을 감수하고 예금보다 약간 높은 수익 추구",
-                "3점: 원금에 10% 미만의 손실이 발생할 수 있음을 인지하고, 안정성과 수익성을 동시에 추구",
-                "4점: 투자원금의 10~20% 손실을 감수하면서 고수익 추구",
-                "5점: 투자원금의 20% 이상 손실을 감수하면서 고수익 추구"
-            ])
-            cog_score = int(cog_choice[0])
-            
-            st.subheader("3. 행동적 투자성향")
-            st.markdown("**(1) 투자 대상 선호**")
-            b1 = st.slider("1점 (은행 예·적금 선호) ↔ 5점 (주식, 채권 등에 직접 투자)", 1, 5, 3)
-            
-            st.markdown("**(2) 투자 기간**")
-            b2 = st.slider("1점 (장기적으로 투자) ↔ 5점 (단기적으로 투자)", 1, 5, 3)
-            
-            st.markdown("**(3) 투자 자금 성격**")
-            b3 = st.slider("1점 (여유자금으로 투자) ↔ 5점 (기회가 있다면 빚을 내서라도 투자)", 1, 5, 3)
-            
-            st.markdown("**(4) 투자 분산 정도**")
-            b4 = st.slider("1점 (다양한 상품에 분산 투자) ↔ 5점 (한 가지 상품에 집중 투자)", 1, 5, 3)
-            
-            st.markdown("**(5) 안정성 vs 수익성**")
-            b5 = st.slider("1점 (자산의 안정성이 우선) ↔ 5점 (원금 손실 위험이 있더라도 수익성이 우선)", 1, 5, 3)
-            
-            submitted = st.form_submit_button("결과 제출하기")
-            
-            if submitted:
-                beh_score = (b1 + b2 + b3 + b4 + b5) / 5.0
-                supabase.table("mbti_investment_survey").update({
-                    "mbti_e_i": e_i, "mbti_s_n": s_n, "mbti_t_f": t_f, "mbti_j_p": j_p,
-                    "cognitive_score": cog_score, "behavioral_score": beh_score
-                }).eq("nickname", nickname).execute()
-                
-                st.rerun()
+            st.rerun()
 
 if __name__ == "__main__":
     main()
