@@ -5,12 +5,11 @@ from scipy import stats
 import plotly.express as px
 import time
 
-# 1. Supabase 연결 설정 (streamlit secrets 사용)
+# 1. Supabase 연결 설정 (secrets.toml 사용)
 url: str = st.secrets["SUPABASE_URL"]
 key: str = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
-# 페이지 기본 설정
 st.set_page_config(page_title="투자성향 분석 실험", layout="wide")
 
 # 2. 메인 화면 및 역할 분기
@@ -34,43 +33,34 @@ def main():
 def professor_view():
     st.title("👨‍🏫 실험 통제 및 결과 패널")
     
-    # 상단 컨트롤 버튼
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns([1, 5])
     with col1:
         if st.button("실험 시작 (학생 화면 열기)"):
             supabase.table("experiment_control").update({"is_started": True}).eq("id", 1).execute()
             st.success("학생들의 화면에 설문이 열렸습니다!")
     with col2:
-        if st.button("실험 종료 (학생 화면 닫기)"):
-            supabase.table("experiment_control").update({"is_started": False}).eq("id", 1).execute()
-            st.warning("실험이 종료되었습니다.")
-    with col3:
         if st.button("새로고침"):
             st.rerun()
 
     st.divider()
     
-    # 탭으로 기능 분리
     tab1, tab2, tab3 = st.tabs(["참여자 현황", "우리 반 포지션 맵", "통계 결과 확인"])
     
-    # 데이터 불러오기
     res = supabase.table("mbti_investment_survey").select("*").execute()
     df = pd.DataFrame(res.data)
     
-    # 결측치 제거된 데이터프레임 준비 (설문 완료자만)
     if not df.empty:
         df_clean = df.dropna(subset=['cognitive_score', 'behavioral_score']).copy()
     else:
         df_clean = pd.DataFrame()
 
-    # [탭 1] 참여자 현황 및 인지-행동 불일치 지수
+    # [탭 1] 참여자 현황
     with tab1:
         st.subheader("👥 참여 학생 및 불일치 지수")
         if df.empty:
             st.info("아직 접속한 학생이 없습니다.")
         else:
-            completed_count = len(df_clean)
-            st.write(f"**총 접속자:** {len(df)} 명 / **설문 완료자:** {completed_count} 명")
+            st.write(f"**총 접속자:** {len(df)} 명 / **설문 완료자:** {len(df_clean)} 명")
             
             for index, row in df.iterrows():
                 name = row['nickname']
@@ -78,7 +68,6 @@ def professor_view():
                 beh = row['behavioral_score']
                 
                 if pd.notna(cog) and pd.notna(beh):
-                    # 불일치 지수 계산 (단순 차이 또는 절대값)
                     gap = cog - beh
                     gap_abs = abs(gap)
                     
@@ -106,47 +95,32 @@ def professor_view():
             avg_cog = df_clean['cognitive_score'].mean()
             avg_beh = df_clean['behavioral_score'].mean()
             
-            # 산점도 그리기 (Plotly 사용)
             fig = px.scatter(
-                df_clean, 
-                x='cognitive_score', 
-                y='behavioral_score', 
-                text='nickname',
+                df_clean, x='cognitive_score', y='behavioral_score', text='nickname',
                 title="학생별 인지적-행동적 투자성향 분포",
-                labels={'cognitive_score': '인지적 투자성향 (점수)', 'behavioral_score': '행동적 투자성향 (평균 점수)'},
-                range_x=[0.5, 5.5], 
-                range_y=[0.5, 5.5]
+                labels={'cognitive_score': '인지적 투자성향', 'behavioral_score': '행동적 투자성향'},
+                range_x=[0.5, 5.5], range_y=[0.5, 5.5]
             )
-            
-            # 점 위쪽에 별명 표시
             fig.update_traces(textposition='top center', marker=dict(size=10, color='indigo'))
-            
-            # 평균선 그리기
-            fig.add_vline(x=avg_cog, line_dash="dash", line_color="red", 
-                          annotation_text=f"인지 평균 ({avg_cog:.2f})", annotation_position="top right")
-            fig.add_hline(y=avg_beh, line_dash="dash", line_color="blue", 
-                          annotation_text=f"행동 평균 ({avg_beh:.2f})", annotation_position="bottom right")
-            
+            fig.add_vline(x=avg_cog, line_dash="dash", line_color="red", annotation_text=f"인지 평균 ({avg_cog:.2f})")
+            fig.add_hline(y=avg_beh, line_dash="dash", line_color="blue", annotation_text=f"행동 평균 ({avg_beh:.2f})")
             st.plotly_chart(fig, use_container_width=True)
 
-    # [탭 3] 실험 결과 확인 (표4, 표6, 상관관계)
+    # [탭 3] 통계 결과 확인
     with tab3:
-        st.subheader("📊 실험 결과 분석 (논문 표 4, 표 6 비교)")
+        st.subheader("📊 실험 결과 분석")
         if len(df_clean) < 2:
             st.warning("통계 분석을 위해 2명 이상의 완료된 데이터가 필요합니다.")
         else:
-            # 피어슨 상관계수
             corr, p_val = stats.pearsonr(df_clean['cognitive_score'], df_clean['behavioral_score'])
-            st.info(f"**인지적 성향과 행동적 성향의 상관계수 (Pearson's r):** {corr:.3f} (p-value: {p_val:.3f})")
+            st.info(f"**인지적-행동적 투자성향 상관계수 (Pearson's r):** {corr:.3f} (p-value: {p_val:.3f})")
             st.divider()
 
-            # T-test 헬퍼 함수
             def display_ttest(dim_col, val_col, group1, group2, title):
                 g1_data = df_clean[df_clean[dim_col] == group1][val_col]
                 g2_data = df_clean[df_clean[dim_col] == group2][val_col]
                 
                 if len(g1_data) > 0 and len(g2_data) > 0:
-                    # t-test 수행 (분산이 다를 수 있음을 가정: equal_var=False)
                     t_stat, p = stats.ttest_ind(g1_data, g2_data, equal_var=False)
                     mean1, mean2 = g1_data.mean(), g2_data.mean()
                     
@@ -163,13 +137,13 @@ def professor_view():
 
             colA, colB = st.columns(2)
             with colA:
-                st.markdown("### 인지적 특성에 따른 투자성향")
+                st.markdown("### 인지적 투자성향 차이")
                 display_ttest('mbti_e_i', 'cognitive_score', 'E', 'I', '외향(E) vs 내향(I)')
                 display_ttest('mbti_s_n', 'cognitive_score', 'S', 'N', '감각(S) vs 직관(N)')
                 display_ttest('mbti_t_f', 'cognitive_score', 'T', 'F', '사고(T) vs 감정(F)')
                 display_ttest('mbti_j_p', 'cognitive_score', 'J', 'P', '판단(J) vs 인식(P)')
             with colB:
-                st.markdown("### 행동적 특성에 따른 투자성향")
+                st.markdown("### 행동적 투자성향 차이")
                 display_ttest('mbti_e_i', 'behavioral_score', 'E', 'I', '외향(E) vs 내향(I)')
                 display_ttest('mbti_s_n', 'behavioral_score', 'S', 'N', '감각(S) vs 직관(N)')
                 display_ttest('mbti_t_f', 'behavioral_score', 'T', 'F', '사고(T) vs 감정(F)')
@@ -179,26 +153,21 @@ def professor_view():
 def student_view(nickname):
     st.title(f"반갑습니다, {nickname}님! 👋")
     
-    # 학생 닉네임 DB 등록
     try:
         supabase.table("mbti_investment_survey").insert({"nickname": nickname}).execute()
     except Exception:
-        pass # 이미 존재하는 닉네임일 경우 무시
+        pass 
     
-    # 실험 통제 상태 확인
     state = supabase.table("experiment_control").select("is_started").eq("id", 1).execute()
     
     if not state.data[0]['is_started']:
-        st.info("⏳ 교수님이 실험을 시작할 때까지 잠시만 대기해 주세요...")
+        st.info("⏳ 대기 중... 교수님이 실험을 시작할 때까지 기다려 주세요.")
         time.sleep(3)
         st.rerun()
     else:
-        st.success("실험이 시작되었습니다! 아래 질문에 답해 주세요.")
-        
-        # 이미 제출했는지 확인
         user_data = supabase.table("mbti_investment_survey").select("cognitive_score").eq("nickname", nickname).execute()
         if user_data.data and user_data.data[0].get("cognitive_score") is not None:
-            st.info("✅ 이미 설문을 제출하셨습니다. 교수님의 화면에서 전체 결과를 확인해 보세요!")
+            st.info("✅ 설문 제출이 완료되었습니다. 화면 상단의 교수님 통계 결과를 함께 확인해 보세요.")
             return
         
         with st.form("survey_form"):
@@ -211,33 +180,39 @@ def student_view(nickname):
             
             st.subheader("2. 인지적 투자성향")
             cog_choice = st.radio("가장 본인과 가까운 성향을 선택하세요:", [
-                "1점: 어떤 위험도 회피하며 예금 등 안전한 성장 추구",
-                "2점: 안정적으로 투자하되 10~20%의 위험성 고려",
-                "3점: 안정적으로 투자하되 30% 이상의 위험성 고려",
-                "4점: 투자원금의 10~20% 손실을 감수하며 고수익 추구",
-                "5점: 투자원금의 20% 이상 손실을 감수하며 고수익 추구"
+                "1점: 어떤 위험도 회피하며, 원금 보존과 은행 이자율 수준의 안전한 성장 추구",
+                "2점: 원금 보존을 최우선으로 하되, 5% 미만의 약간의 손실 위험을 감수하고 예금보다 약간 높은 수익 추구",
+                "3점: 원금에 10% 미만의 손실이 발생할 수 있음을 인지하고, 안정성과 수익성을 동시에 추구",
+                "4점: 투자원금의 10~20% 손실을 감수하면서 고수익 추구",
+                "5점: 투자원금의 20% 이상 손실을 감수하면서 고수익 추구"
             ])
             cog_score = int(cog_choice[0])
             
             st.subheader("3. 행동적 투자성향")
-            st.write("각 문항에 대해 1점(전혀 그렇지 않다)부터 5점(매우 그렇다) 사이로 응답해 주세요.")
-            b1 = st.slider("주식, 채권 등에 직접 투자한다.", 1, 5, 3)
-            b2 = st.slider("단기적으로 투자한다.", 1, 5, 3)
-            b3 = st.slider("좋은 투자기회가 있다면 빚을 내서라도 투자한다.", 1, 5, 3)
-            b4 = st.slider("한 가지 상품에 집중적으로 투자한다.", 1, 5, 3)
-            b5 = st.slider("원금 손실 위험이 있더라도 투자 수익성이 우선이다.", 1, 5, 3)
+            st.markdown("**(1) 투자 대상 선호**")
+            b1 = st.slider("1점 (은행 예·적금 선호) ↔ 5점 (주식, 채권 등에 직접 투자)", 1, 5, 3)
+            
+            st.markdown("**(2) 투자 기간**")
+            b2 = st.slider("1점 (장기적으로 투자) ↔ 5점 (단기적으로 투자)", 1, 5, 3)
+            
+            st.markdown("**(3) 투자 자금 성격**")
+            b3 = st.slider("1점 (여유자금으로 투자) ↔ 5점 (기회가 있다면 빚을 내서라도 투자)", 1, 5, 3)
+            
+            st.markdown("**(4) 투자 분산 정도**")
+            b4 = st.slider("1점 (다양한 상품에 분산 투자) ↔ 5점 (한 가지 상품에 집중 투자)", 1, 5, 3)
+            
+            st.markdown("**(5) 안정성 vs 수익성**")
+            b5 = st.slider("1점 (자산의 안정성이 우선) ↔ 5점 (원금 손실 위험이 있더라도 수익성이 우선)", 1, 5, 3)
             
             submitted = st.form_submit_button("결과 제출하기")
             
             if submitted:
                 beh_score = (b1 + b2 + b3 + b4 + b5) / 5.0
-                
                 supabase.table("mbti_investment_survey").update({
                     "mbti_e_i": e_i, "mbti_s_n": s_n, "mbti_t_f": t_f, "mbti_j_p": j_p,
                     "cognitive_score": cog_score, "behavioral_score": beh_score
                 }).eq("nickname", nickname).execute()
                 
-                st.success("응답이 성공적으로 제출되었습니다. 수고하셨습니다!")
                 st.rerun()
 
 if __name__ == "__main__":
