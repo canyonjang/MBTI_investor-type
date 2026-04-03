@@ -54,7 +54,7 @@ def professor_view():
     tab1, tab2, tab3 = st.tabs(["참여자 현황", "우리 반 포지션 맵", "통계 결과 확인"])
     
     # 데이터 불러오기
-    res = supabase.table("MBTI_investment_survey").select("*").execute()
+    res = supabase.table("mbti_investment_survey").select("*").execute()
     df = pd.DataFrame(res.data)
     
     # 결측치 제거된 데이터프레임 준비 (설문 완료자만)
@@ -181,7 +181,7 @@ def student_view(nickname):
     
     # 학생 닉네임 DB 등록
     try:
-        supabase.table("MBTI_investment_survey").insert({"nickname": nickname}).execute()
+        supabase.table("mbti_investment_survey").insert({"nickname": nickname}).execute()
     except Exception:
         pass # 이미 존재하는 닉네임일 경우 무시
     
@@ -196,7 +196,7 @@ def student_view(nickname):
         st.success("실험이 시작되었습니다! 아래 질문에 답해 주세요.")
         
         # 이미 제출했는지 확인
-        user_data = supabase.table("MBTI_investment_survey").select("cognitive_score").eq("nickname", nickname).execute()
+        user_data = supabase.table("mbti_investment_survey").select("cognitive_score").eq("nickname", nickname).execute()
         if user_data.data and user_data.data[0].get("cognitive_score") is not None:
             st.info("✅ 이미 설문을 제출하셨습니다. 교수님의 화면에서 전체 결과를 확인해 보세요!")
             return
@@ -232,7 +232,7 @@ def student_view(nickname):
             if submitted:
                 beh_score = (b1 + b2 + b3 + b4 + b5) / 5.0
                 
-                supabase.table("MBTI_investment_survey").update({
+                supabase.table("mbti_investment_survey").update({
                     "mbti_e_i": e_i, "mbti_s_n": s_n, "mbti_t_f": t_f, "mbti_j_p": j_p,
                     "cognitive_score": cog_score, "behavioral_score": beh_score
                 }).eq("nickname", nickname).execute()
